@@ -1,15 +1,30 @@
 use rand::Rng;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::os::unix::fs::PermissionsExt;
-use std::process::Command;
-use thirtyfour::{DesiredCapabilities, WebDriver};
+use std::process::{Child, Command};
 use std::error::Error;
+use std::thread;
 use std::time::Duration;
-use thirtyfour::{prelude::ElementWaitable, By};
+use async_trait::async_trait;
 
-/// Fetches a new ChromeDriver executable and patches it to prevent detection.
-/// Returns a WebDriver instance.
-pub async fn chrome() -> Result<WebDriver, Box<dyn std::error::Error>> {
+pub use thirtyfour::*;
+use thirtyfour::error::WebDriverResult;
+use thirtyfour::prelude::ElementWaitable;
+
+pub struct UndetectedChrome {
+    webdriver: WebDriver,
+    child: Child,
+}
+
+/// true for custom User-Agent and CLOUDFLAREBYPASSER = HEADLESS(true)
+pub enum UndetectedChromeUsage {
+    HEADLESS(bool), /// true for custom User-Agent
+    WINDOWS(bool), /// true for custom User-Agent
+    CLOUDFLAREBYPASSER, /// equivalent to HEADLESS(true)
+}
+
+
+async fn chrome(usage: UndetectedChromeUsage) -> Result<(WebDriver, Child ), Box<dyn std::error::Error>> {
     let os = std::env::consts::OS;
     if std::path::Path::new("chromedriver").exists()
         || std::path::Path::new("chromedriver.exe").exists()
@@ -100,20 +115,29 @@ pub async fn chrome() -> Result<WebDriver, Box<dyn std::error::Error>> {
     }
     println!("Starting chromedriver...");
     let port: usize = rand::thread_rng().gen_range(2000..5000);
-    Command::new(format!("./{}", chromedriver_executable))
+    let child = Command::new(format!("./{}", chromedriver_executable))
         .arg(format!("--port={}", port))
         .spawn()
         .expect("Failed to start chromedriver!");
     let mut caps = DesiredCapabilities::chrome();
-    caps.set_no_sandbox().unwrap();
-    caps.set_disable_dev_shm_usage().unwrap();
-    caps.add_chrome_arg("--disable-blink-features=AutomationControlled")
-        .unwrap();
-    caps.add_chrome_arg("window-size=1920,1080").unwrap();
-    caps.add_chrome_arg("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.0.0 Safari/537.36").unwrap();
-    caps.add_chrome_arg("disable-infobars").unwrap();
-    caps.add_chrome_option("excludeSwitches", ["enable-automation"])
-        .unwrap();
+    caps.add_default_capabilities();
+
+
+    match usage {
+        UndetectedChromeUsage::HEADLESS(true)  =>  {
+            caps.set_headless_version().await.unwrap();
+            caps.add_chrome_arg("user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36").unwrap();
+        },
+        UndetectedChromeUsage::WINDOWS(true) => caps.add_chrome_arg("user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36").unwrap(),
+        UndetectedChromeUsage::HEADLESS(false) => {
+            caps.set_headless_version().await.unwrap();
+        },
+        UndetectedChromeUsage::WINDOWS(false) => {},
+        UndetectedChromeUsage::CLOUDFLAREBYPASSER => {
+            caps.set_headless_version().await.unwrap();
+            caps.add_chrome_arg("user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36").unwrap();
+        }
+    }
     let mut driver = None;
     let mut attempt = 0;
     while driver.is_none() && attempt < 20 {
@@ -124,9 +148,8 @@ pub async fn chrome() -> Result<WebDriver, Box<dyn std::error::Error>> {
         }
     }
     let driver = driver.unwrap();
-    Ok(driver)
+    Ok((driver, child))
 }
-
 async fn fetch_chromedriver(client: &reqwest::Client) -> Result<(), Box<dyn std::error::Error>> {
     let os = std::env::consts::OS;
 
@@ -145,15 +168,16 @@ async fn fetch_chromedriver(client: &reqwest::Client) -> Result<(), Box<dyn std:
         // Fetch the chromedriver binary
         chromedriver_url = match os {
             "linux" => format!(
-                "https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing/{}/{}/{}",
+                //https://storage.googleapis.com/chrome-for-testing-public/124.0.6367.155/win64/chrome-win64.zip
+                "https://storage.googleapis.com/chrome-for-testing-public/{}/{}/{}",
                 version, "linux64", "chromedriver-linux64.zip"
             ),
             "macos" => format!(
-                "https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing/{}/{}/{}",
+                "https://storage.googleapis.com/chrome-for-testing-public/{}/{}/{}",
                 version, "mac-x64", "chromedriver-mac-x64.zip"
             ),
             "windows" => format!(
-                "https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing/{}/{}/{}",
+                "https://storage.googleapis.com/chrome-for-testing-public/{}/{}/{}",
                 version, "win64", "chromedriver-win64.zip"
             ),
             _ => panic!("Unsupported OS!"),
@@ -201,9 +225,8 @@ async fn fetch_chromedriver(client: &reqwest::Client) -> Result<(), Box<dyn std:
     }
     Ok(())
 }
-
 async fn get_chrome_version(os: &str) -> Result<String, Box<dyn std::error::Error>> {
-    println!("Getting installed Chrome version...");
+    //println!("Getting installed Chrome version...");
     let command = match os {
         "linux" => Command::new("/usr/bin/google-chrome")
             .arg("--version")
@@ -218,36 +241,121 @@ async fn get_chrome_version(os: &str) -> Result<String, Box<dyn std::error::Erro
         _ => panic!("Unsupported OS!"),
     };
     let output = String::from_utf8(command.stdout)?;
-    
-    let version = output
-    .lines()
-    .flat_map(|line| line.chars().filter(|&ch| ch.is_ascii_digit()))
-    .take(3)
-    .collect::<String>();
 
-    println!("Currently installed Chrome version: {}", version);
+    let version = output
+        .lines()
+        .flat_map(|line| line.chars().filter(|&ch| ch.is_ascii_digit()))
+        .take(3)
+        .collect::<String>();
+
+    //println!("Currently installed Chrome version: {}", version);
     Ok(version)
 }
+#[async_trait]
+pub trait CustomTrait {
+    fn add_default_capabilities(&mut self);
+    async fn set_headless_version(&mut self) -> WebDriverResult<()>;
+    fn set_disable_blink_features(&mut self) -> WebDriverResult<()>;
+    fn set_disable_popup_blocking(&mut self) -> WebDriverResult<()>;
+    fn set_disable_extensions(&mut self) -> WebDriverResult<()>;
+    fn set_window_size(&mut self, width: u32, height: u32) -> WebDriverResult<()>;
+    fn set_disable_infobars(&mut self) -> WebDriverResult<()>;
+    fn set_start_maximized(&mut self) -> WebDriverResult<()>;
+    fn set_exclude_switches(&mut self) -> WebDriverResult<()>;
+}
+#[async_trait]
+impl CustomTrait for ChromeCapabilities {
+    fn add_default_capabilities(&mut self) {
+        self.set_no_sandbox().unwrap();
+        self.set_disable_dev_shm_usage().unwrap();
+        self.set_disable_web_security().unwrap();
+        self.set_disable_blink_features().unwrap();
+        self.set_disable_popup_blocking().unwrap();
+        self.set_disable_extensions().unwrap();
+        self.set_window_size(1920,1080).unwrap();
+        self.set_disable_infobars().unwrap();
+        self.set_start_maximized().unwrap();
+        self.set_exclude_switches().unwrap();
+    }
+    async fn set_headless_version(&mut self) -> WebDriverResult<()> {
+        if get_chrome_version(std::env::consts::OS).await.unwrap().parse::<u32>().unwrap() >= 108 {
+            self.add_chrome_arg("--headless=new")
+        }
+        else {
+            self.add_chrome_arg("--headless=chrome")
+        }
+    }
+    fn set_disable_blink_features(&mut self) -> WebDriverResult<()> {
+        self.add_chrome_arg("--disable-blink-features=AutomationControlled")
+    }
 
+    fn set_disable_popup_blocking(&mut self) -> WebDriverResult<()> {
+        self.add_chrome_arg("--disable-popup-blocking")
+    }
+
+    fn set_disable_extensions(&mut self) -> WebDriverResult<()> {
+        self.add_chrome_arg("--disable-extensions")
+    }
+
+    fn set_window_size(&mut self, width: u32, height: u32) -> WebDriverResult<()> {
+        self.add_chrome_arg(format!("--window-size={},{}", width, height).as_str())
+    }
+    fn set_disable_infobars(&mut self) -> WebDriverResult<()> {
+        self.add_chrome_arg("--disable-infobars")
+    }
+    fn set_start_maximized(&mut self) -> WebDriverResult<()> {
+        self.add_chrome_arg("--start-maximized")
+    }
+    fn set_exclude_switches(&mut self) -> WebDriverResult<()> {
+        self.add_chrome_option("excludeSwitches", ["enable-automation"])
+    }
+}
 #[async_trait::async_trait]
 pub trait Chrome {
-    async fn new() -> Self;
+    async fn new(usage: UndetectedChromeUsage) -> Self;
     async fn bypass_cloudflare(
         &self,
         url: &str,
     ) -> Result<(), Box<dyn Error>>;
-    async fn borrow(&self) -> &WebDriver;
+
+    async fn kill(&mut self);
+    fn borrow(&self) -> WebDriver;
     async fn goto(&self, url: &str) -> Result<(), Box<dyn Error>>;
 }
-
 #[async_trait::async_trait]
-impl Chrome for WebDriver {
-    async fn new() -> WebDriver {
-        chrome().await.unwrap()
+impl Chrome for UndetectedChrome {
+    async fn new(usage: UndetectedChromeUsage) -> UndetectedChrome {
+        let (webdriver , child) = chrome(usage).await.unwrap();
+        UndetectedChrome { webdriver, child }
     }
+    async fn bypass_cloudflare(
+        &self,
+        url: &str,
+    ) -> Result<(), Box<dyn Error>> {
+        let driver = self.borrow();
+        self.goto(url).await?;
 
+        driver.enter_frame(0).await?;
+
+        let button = driver.find(By::Css("#challenge-stage")).await?;
+
+        button.wait_until().clickable().await?;
+        thread::sleep(Duration::from_secs(2));
+        button.click().await?;
+
+        thread::sleep(Duration::from_secs(2));
+
+        Ok(())
+    }
+    async fn kill(&mut self) {
+        self.borrow().quit().await.unwrap();
+        self.child.kill().unwrap();
+    }
+    fn borrow(&self) -> WebDriver {
+        self.webdriver.to_owned()
+    }
     async fn goto(&self, url: &str) -> Result<(), Box<dyn Error>> {
-        let driver = self.borrow().await;
+        let driver = self.borrow();
         driver
             .execute(
                 &format!(r#"window.open("{}", "_blank");"#, url),
@@ -255,7 +363,7 @@ impl Chrome for WebDriver {
             )
             .await?;
 
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        thread::sleep(Duration::from_secs(3));
 
         let first_window = driver
         .windows()
@@ -273,30 +381,46 @@ impl Chrome for WebDriver {
             .expect("Unable to get last windows")
             .clone();
         driver.switch_to_window(first_window).await?;
+
         Ok(())
     }
-
-async fn bypass_cloudflare(
-    &self,
-    url: &str,
-) -> Result<(), Box<dyn Error>> {
-    let driver = self.borrow().await;
-    driver.goto(url).await?;
-
-    driver.enter_frame(0).await?;
-
-    let button = driver.find(By::Css("#challenge-stage")).await?;
-
-    button.wait_until().clickable().await?;
-
-    tokio::time::sleep(Duration::from_secs(2)).await;
-
-    button.click().await?;
-    Ok(())
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-async fn borrow(&self) -> &WebDriver {
-    self
-}
+    #[tokio::test]
+    async fn it_works() {
+        let mut client = UndetectedChrome::new(UndetectedChromeUsage::CLOUDFLAREBYPASSER).await;
 
+        match client.bypass_cloudflare("https://www3.yggtorrent.cool").await {
+            Ok(_) => println!("Cloudflare bypassed successfully!"),
+            Err(e) => {
+                println!("Error: {}", e);
+                client.kill().await;
+            },
+        }
+
+        let webdriver = client.borrow();
+
+        match webdriver.get_all_cookies().await {
+            Ok(cookies) => {
+                let last_cookie = cookies.last().map(|c| c.to_owned().into_owned());
+
+                for (_, cookie) in cookies.iter().enumerate() {
+                    print!("{}={}", cookie.name(), cookie.value());
+                    if Some(cookie) != last_cookie.as_ref() {
+                        print!("; ");
+                    }
+                }
+                println!();
+            },
+            Err(e) => {
+                println!("Error: {}", e);
+                client.kill().await;
+            }
+        }
+
+        client.kill().await;
+    }
 }
