@@ -18,9 +18,9 @@ pub struct UndetectedChrome {
 
 /// true for custom User-Agent and CLOUDFLAREBYPASSER = HEADLESS(true)
 pub enum UndetectedChromeUsage {
-    HEADLESS(bool), /// true for custom User-Agent
-    WINDOWS(bool), /// true for custom User-Agent
-    CLOUDFLAREBYPASSER, /// equivalent to HEADLESS(true)
+    HEADLESS(bool),
+    WINDOWS(bool),
+    CLOUDFLAREBYPASSER,
 }
 
 
