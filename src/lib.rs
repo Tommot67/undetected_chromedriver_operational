@@ -165,6 +165,8 @@ async fn fetch_chromedriver(client: &reqwest::Client) -> Result<(), Box<dyn std:
             .as_str()
             .unwrap();
 
+        println!("Version to download : {:?}", version);
+
         // Fetch the chromedriver binary
         chromedriver_url = match os {
             "linux" => format!(
@@ -182,6 +184,9 @@ async fn fetch_chromedriver(client: &reqwest::Client) -> Result<(), Box<dyn std:
             ),
             _ => panic!("Unsupported OS!"),
         };
+
+        println!("Url for donwload : {:?}", chromedriver_url);
+
     } else {
         let resp = client
             .get(format!(
@@ -316,6 +321,7 @@ pub trait Chrome {
     async fn bypass_cloudflare(
         &self,
         url: &str,
+        selector: Option<&str>
     ) -> Result<(), Box<dyn Error>>;
 
     async fn kill(&mut self);
@@ -331,17 +337,25 @@ impl Chrome for UndetectedChrome {
     async fn bypass_cloudflare(
         &self,
         url: &str,
+        selector: Option<&str>
     ) -> Result<(), Box<dyn Error>> {
         let driver = self.borrow();
-        self.goto(url).await?;
 
-        driver.enter_frame(0).await?;
+        self.goto(url).await.expect("ERROR during cloudflare bypass");
 
-        let button = driver.find(By::Css("#challenge-stage")).await?;
+        if selector.is_some() {
+            if driver.find(By::Css(selector.unwrap())).await.is_ok() {
+                return Ok(())
+            }
+        }
 
-        button.wait_until().clickable().await?;
+        driver.enter_frame(0).await.expect("ERROR during cloudflare bypass");
+
+        let button = driver.find(By::Css("#challenge-stage")).await.expect("ERROR during cloudflare bypass");;
+
+        button.wait_until().clickable().await.expect("ERROR during cloudflare bypass");;
         thread::sleep(Duration::from_secs(2));
-        button.click().await?;
+        button.click().await.expect("ERROR during cloudflare bypass");;
 
         thread::sleep(Duration::from_secs(2));
 
@@ -391,29 +405,19 @@ mod tests {
 
     #[tokio::test]
     async fn it_works() {
-        let mut client = UndetectedChrome::new(UndetectedChromeUsage::CLOUDFLAREBYPASSER).await;
-
-        match client.bypass_cloudflare("https://www3.yggtorrent.cool").await {
-            Ok(_) => println!("Cloudflare bypassed successfully!"),
-            Err(e) => {
-                println!("Error: {}", e);
-                client.kill().await;
-            },
-        }
+        let mut client = UndetectedChrome::new(UndetectedChromeUsage::HEADLESS(false)).await;
 
         let webdriver = client.borrow();
+
+        webdriver.goto("https://github.com/").await.expect("Rrr");
 
         match webdriver.get_all_cookies().await {
             Ok(cookies) => {
                 let last_cookie = cookies.last().map(|c| c.to_owned().into_owned());
 
                 for (_, cookie) in cookies.iter().enumerate() {
-                    print!("{}={}", cookie.name(), cookie.value());
-                    if Some(cookie) != last_cookie.as_ref() {
-                        print!("; ");
-                    }
+                    println!("{}", cookie.to_string())
                 }
-                println!();
             },
             Err(e) => {
                 println!("Error: {}", e);
