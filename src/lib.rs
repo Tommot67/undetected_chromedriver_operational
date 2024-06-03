@@ -119,23 +119,25 @@ async fn chrome(usage: UndetectedChromeUsage) -> Result<(WebDriver, Child ), Box
         .arg(format!("--port={}", port))
         .spawn()
         .expect("Failed to start chromedriver!");
+
+    let version = get_chrome_version(std::env::consts::OS).await.unwrap().parse::<u32>().unwrap();
+
     let mut caps = DesiredCapabilities::chrome();
     caps.add_default_capabilities();
 
-
     match usage {
         UndetectedChromeUsage::HEADLESS(true)  =>  {
-            caps.set_headless_version().await.unwrap();
-            caps.add_chrome_arg("user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36").unwrap();
+            caps.set_headless_version(version).await.unwrap();
+            caps.add_chrome_arg(format!("user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{}.0.0.0 Safari/537.36", version).as_str()).unwrap();
         },
-        UndetectedChromeUsage::WINDOWS(true) => caps.add_chrome_arg("user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36").unwrap(),
+        UndetectedChromeUsage::WINDOWS(true) => caps.add_chrome_arg(format!("user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{}.0.0.0 Safari/537.36", version).as_str()).unwrap(),
         UndetectedChromeUsage::HEADLESS(false) => {
-            caps.set_headless_version().await.unwrap();
+            caps.set_headless_version(version).await.unwrap();
         },
         UndetectedChromeUsage::WINDOWS(false) => {},
         UndetectedChromeUsage::CLOUDFLAREBYPASSER => {
-            caps.set_headless_version().await.unwrap();
-            caps.add_chrome_arg("user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36").unwrap();
+            caps.set_headless_version(version).await.unwrap();
+            caps.add_chrome_arg(format!("user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{}.0.0.0 Safari/537.36", version).as_str()).unwrap();
         }
     }
     let mut driver = None;
@@ -259,7 +261,7 @@ async fn get_chrome_version(os: &str) -> Result<String, Box<dyn std::error::Erro
 #[async_trait]
 pub trait CustomTrait {
     fn add_default_capabilities(&mut self);
-    async fn set_headless_version(&mut self) -> WebDriverResult<()>;
+    async fn set_headless_version(&mut self, version: u32) -> WebDriverResult<()>;
     fn set_disable_blink_features(&mut self) -> WebDriverResult<()>;
     fn set_disable_popup_blocking(&mut self) -> WebDriverResult<()>;
     fn set_disable_extensions(&mut self) -> WebDriverResult<()>;
@@ -282,13 +284,14 @@ impl CustomTrait for ChromeCapabilities {
         self.set_start_maximized().unwrap();
         self.set_exclude_switches().unwrap();
     }
-    async fn set_headless_version(&mut self) -> WebDriverResult<()> {
-        if get_chrome_version(std::env::consts::OS).await.unwrap().parse::<u32>().unwrap() >= 108 {
-            self.add_chrome_arg("--headless=new")
+    async fn set_headless_version(&mut self, version: u32) -> WebDriverResult<()> {
+        if version >= 108 {
+            self.add_chrome_arg("--headless=new").expect("");
         }
         else {
-            self.add_chrome_arg("--headless=chrome")
+            self.add_chrome_arg("--headless=chrome").expect("");
         }
+        self.add_chrome_arg("--disable-gpu")
     }
     fn set_disable_blink_features(&mut self) -> WebDriverResult<()> {
         self.add_chrome_arg("--disable-blink-features=AutomationControlled")
@@ -351,11 +354,11 @@ impl Chrome for UndetectedChrome {
 
         driver.enter_frame(0).await.expect("ERROR during cloudflare bypass");
 
-        let button = driver.find(By::Css("#challenge-stage")).await.expect("ERROR during cloudflare bypass");;
+        let button = driver.find(By::Css("#challenge-stage")).await.expect("ERROR during cloudflare bypass");
 
-        button.wait_until().clickable().await.expect("ERROR during cloudflare bypass");;
+        button.wait_until().clickable().await.expect("ERROR during cloudflare bypass");
         thread::sleep(Duration::from_secs(2));
-        button.click().await.expect("ERROR during cloudflare bypass");;
+        button.click().await.expect("ERROR during cloudflare bypass");
 
         thread::sleep(Duration::from_secs(2));
 
@@ -405,17 +408,16 @@ mod tests {
 
     #[tokio::test]
     async fn it_works() {
-        let mut client = UndetectedChrome::new(UndetectedChromeUsage::HEADLESS(false)).await;
+        let mut client = UndetectedChrome::new(UndetectedChromeUsage::CLOUDFLAREBYPASSER).await;
+
+        client.bypass_cloudflare("https://www.ygg.re/", Some(r#"img[src="/assets/img/logov2.svg"]"#)).await.expect("TODO: panic message");
 
         let webdriver = client.borrow();
 
-        webdriver.goto("https://github.com/").await.expect("Rrr");
-
         match webdriver.get_all_cookies().await {
             Ok(cookies) => {
-                let last_cookie = cookies.last().map(|c| c.to_owned().into_owned());
 
-                for (_, cookie) in cookies.iter().enumerate() {
+                for cookie in cookies {
                     println!("{}", cookie.to_string())
                 }
             },
