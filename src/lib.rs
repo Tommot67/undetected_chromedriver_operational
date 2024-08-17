@@ -9,7 +9,6 @@ use async_trait::async_trait;
 
 pub use thirtyfour::*;
 use thirtyfour::error::WebDriverResult;
-use thirtyfour::prelude::ElementWaitable;
 
 pub struct UndetectedChrome {
     webdriver: WebDriver,
@@ -128,16 +127,16 @@ async fn chrome(usage: UndetectedChromeUsage) -> Result<(WebDriver, Child ), Box
     match usage {
         UndetectedChromeUsage::HEADLESS(true)  =>  {
             caps.set_headless_version(version).await.unwrap();
-            caps.add_chrome_arg(format!("user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{}.0.0.0 Safari/537.36", version).as_str()).unwrap();
+            caps.add_arg(format!("user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{}.0.0.0 Safari/537.36", version).as_str()).unwrap();
         },
-        UndetectedChromeUsage::WINDOWS(true) => caps.add_chrome_arg(format!("user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{}.0.0.0 Safari/537.36", version).as_str()).unwrap(),
+        UndetectedChromeUsage::WINDOWS(true) => caps.add_arg(format!("user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{}.0.0.0 Safari/537.36", version).as_str()).unwrap(),
         UndetectedChromeUsage::HEADLESS(false) => {
             caps.set_headless_version(version).await.unwrap();
         },
         UndetectedChromeUsage::WINDOWS(false) => {},
         UndetectedChromeUsage::CLOUDFLAREBYPASSER => {
             caps.set_headless_version(version).await.unwrap();
-            caps.add_chrome_arg(format!("user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{}.0.0.0 Safari/537.36", version).as_str()).unwrap();
+            caps.add_arg(format!("user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{}.0.0.0 Safari/537.36", version).as_str()).unwrap();
         }
     }
     let mut driver = None;
@@ -268,12 +267,16 @@ pub trait CustomTrait {
     fn set_window_size(&mut self, width: u32, height: u32) -> WebDriverResult<()>;
     fn set_disable_infobars(&mut self) -> WebDriverResult<()>;
     fn set_start_maximized(&mut self) -> WebDriverResult<()>;
-    fn set_exclude_switches(&mut self) -> WebDriverResult<()>;
+    fn set_no_sandbox(&mut self) -> WebDriverResult<()>;
+    fn set_auto_open_devtools(&mut self) -> WebDriverResult<()>;
+    fn set_engine_chooser(&mut self) -> WebDriverResult<()>;
+    fn set_disable_renderer_backgrounding(&mut self) -> WebDriverResult<()>;
+    fn set_disable_backgrounding_occluded_windows(&mut self) -> WebDriverResult<()>;
 }
 #[async_trait]
 impl CustomTrait for ChromeCapabilities {
     fn add_default_capabilities(&mut self) {
-        self.set_no_sandbox().unwrap();
+        CustomTrait::set_no_sandbox(self).unwrap(); // ignore thirtyfour::ChromiumLikeCapabilities::set_no_sandbox(&mut self)
         self.set_disable_dev_shm_usage().unwrap();
         self.set_disable_web_security().unwrap();
         self.set_disable_blink_features().unwrap();
@@ -282,40 +285,57 @@ impl CustomTrait for ChromeCapabilities {
         self.set_window_size(1920,1080).unwrap();
         self.set_disable_infobars().unwrap();
         self.set_start_maximized().unwrap();
-        self.set_exclude_switches().unwrap();
+        self.set_engine_chooser().unwrap();
+        self.set_auto_open_devtools().unwrap();
+        self.set_disable_renderer_backgrounding().unwrap();
+        self.set_disable_backgrounding_occluded_windows().unwrap();
     }
     async fn set_headless_version(&mut self, version: u32) -> WebDriverResult<()> {
         if version >= 108 {
-            self.add_chrome_arg("--headless=new").expect("");
+            self.add_arg("--headless=new").expect("");
         }
         else {
-            self.add_chrome_arg("--headless=chrome").expect("");
+            self.add_arg("--headless=chrome").expect("");
         }
-        self.add_chrome_arg("--disable-gpu")
+        self.add_arg("--disable-gpu")
     }
     fn set_disable_blink_features(&mut self) -> WebDriverResult<()> {
-        self.add_chrome_arg("--disable-blink-features=AutomationControlled")
+        self.add_arg("--disable-blink-features=AutomationControlled")
     }
 
     fn set_disable_popup_blocking(&mut self) -> WebDriverResult<()> {
-        self.add_chrome_arg("--disable-popup-blocking")
+        self.add_arg("--disable-popup-blocking")
     }
 
     fn set_disable_extensions(&mut self) -> WebDriverResult<()> {
-        self.add_chrome_arg("--disable-extensions")
+        self.add_arg("--disable-extensions")
     }
 
     fn set_window_size(&mut self, width: u32, height: u32) -> WebDriverResult<()> {
-        self.add_chrome_arg(format!("--window-size={},{}", width, height).as_str())
+        self.add_arg(format!("--window-size={},{}", width, height).as_str())
     }
     fn set_disable_infobars(&mut self) -> WebDriverResult<()> {
-        self.add_chrome_arg("--disable-infobars")
+        self.add_arg("--disable-infobars")
     }
     fn set_start_maximized(&mut self) -> WebDriverResult<()> {
-        self.add_chrome_arg("--start-maximized")
+        self.add_arg("--start-maximized")
     }
-    fn set_exclude_switches(&mut self) -> WebDriverResult<()> {
-        self.add_chrome_option("excludeSwitches", ["enable-automation"])
+    fn set_no_sandbox(&mut self) -> WebDriverResult<()> {
+        self.add_arg("--no-sandbox")
+    }
+    fn set_auto_open_devtools(&mut self) -> WebDriverResult<()> {
+        self.add_arg("--auto-open-devtools-for-tabs")
+    }
+    fn set_engine_chooser(&mut self) -> WebDriverResult<()> {
+        self.add_arg("--disable-search-engine-choice-screen")
+    }
+
+    fn set_disable_renderer_backgrounding(&mut self) -> WebDriverResult<()> {
+        self.add_arg("--disable-renderer-backgrounding")
+    }
+
+    fn set_disable_backgrounding_occluded_windows(&mut self) -> WebDriverResult<()> {
+        self.add_arg("--disable-backgrounding-occluded-windows")
     }
 }
 #[async_trait::async_trait]
@@ -346,11 +366,26 @@ impl Chrome for UndetectedChrome {
 
         self.goto(url).await.expect("ERROR during cloudflare bypass");
 
+
+
         if selector.is_some() {
             if driver.find(By::Css(selector.unwrap())).await.is_ok() {
                 return Ok(())
             }
         }
+
+        thread::sleep(Duration::from_secs(10));
+
+        let inputs = driver.find_all(By::XPath("//iframe")).await.expect("ERROR during cloudflare bypass");
+
+        println!("Inputs : {}", inputs.len());
+
+        for input in inputs {
+            println!("Element : {}", input);
+
+        }
+
+        /*
 
         driver.enter_frame(0).await.expect("ERROR during cloudflare bypass");
 
@@ -361,6 +396,9 @@ impl Chrome for UndetectedChrome {
         button.click().await.expect("ERROR during cloudflare bypass");
 
         thread::sleep(Duration::from_secs(2));
+
+
+         */
 
         Ok(())
     }
@@ -408,17 +446,18 @@ mod tests {
 
     #[tokio::test]
     async fn it_works() {
-        let mut client = UndetectedChrome::new(UndetectedChromeUsage::CLOUDFLAREBYPASSER).await;
+        let mut client = UndetectedChrome::new(UndetectedChromeUsage::WINDOWS(true)).await;
 
-        client.bypass_cloudflare("https://www.ygg.re/", Some(r#"img[src="/assets/img/logov2.svg"]"#)).await.expect("TODO: panic message");
+        client.bypass_cloudflare("https://seleniumbase.io/apps/turnstile", Some(r#"img[src="/assets/img/logov2.svg"]"#)).await.expect("TODO: panic message");
 
         let webdriver = client.borrow();
+
 
         match webdriver.get_all_cookies().await {
             Ok(cookies) => {
 
                 for cookie in cookies {
-                    println!("{}", cookie.to_string())
+                    println!("{:#?}", cookie)
                 }
             },
             Err(e) => {
